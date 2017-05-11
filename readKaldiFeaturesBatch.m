@@ -97,21 +97,55 @@ function [utt_mat, ark_handle] = readKaldiFeatureArk(ark_handle, position)
     ark_head = fread(ark_handle, 5, 'uint8=>char');
     binary = ark_head(2);
     if binary == 'B'
-        MV = ark_head(4);
-        if MV == 'M'
-            fseek(ark_handle, 1, 'cof');
-            rows = fread(ark_handle, 1, 'int32');
-            fseek(ark_handle, 1, 'cof');
-            cols = fread(ark_handle, 1, 'int32');
-            tmp_mat = fread(ark_handle, rows * cols, 'float32');
-            utt_mat = reshape(tmp_mat, cols, rows)';
-        elseif MV == 'V'
-            fseek(ark_handle, 1, 'cof');
-            rows = fread(ark_handle, 1, 'int32');
-            utt_mat = fread(ark_handle, rows, 'float32');
+        Compress = ark_head(3);
+        if Compress == 'C'
+            if ark_head(3) ~= '2'
+                min_value = fread(ark_handle, 1, 'float32');
+                range = fread(ark_handle, 1, 'float32');
+                rows = fread(ark_handle, 1, 'int32');
+                cols = fread(ark_handle, 1, 'int32');
+                utt_mat = zeros(rows, cols);
+                percentitle_0 = zeros(1, cols);
+                percentitle_25 = zeros(1, cols);
+                percentitle_75 = zeros(1, cols);
+                percentitle_100 = zeros(1, cols);
+                for c = 1 : cols
+                    percentitle_0(c) = fread(ark_handle, 1, 'uint16');
+                    percentitle_25(c) = fread(ark_handle, 1, 'uint16');
+                    percentitle_75(c) = fread(ark_handle, 1, 'uint16');
+                    percentitle_100(c) = fread(ark_handle, 1, 'uint16');
+                end
+                for c = 1 : cols 
+                    p0 = Uint16ToFloat(min_value, range, percentitle_0(c));
+                    p25 = Uint16ToFloat(min_value, range, percentitle_25(c));
+                    p75 = Uint16ToFloat(min_value, range, percentitle_75(c));
+                    p100 = Uint16ToFloat(min_value, range, percentitle_100(c));
+                    for r = 1 : rows
+                        byte_data = fread(ark_handle, 1, 'uchar');
+                        utt_mat(r, c) = CharToFloat(p0, p25, p75, p100, byte_data);
+                    end
+                end
+            else
+                error(['Do not support binary compress matrix 2 (with head "BCM2") '
+                    'please change the format with command "copy-feats --compress=false ...\n".']);
+            end
         else
-            utt_mat = -1;
-            return;
+            MV = ark_head(4);
+            if MV == 'M'
+                fseek(ark_handle, 1, 'cof');
+                rows = fread(ark_handle, 1, 'int32');
+                fseek(ark_handle, 1, 'cof');
+                cols = fread(ark_handle, 1, 'int32');
+                tmp_mat = fread(ark_handle, rows * cols, 'float32');
+                utt_mat = reshape(tmp_mat, cols, rows)';
+            elseif MV == 'V'
+                fseek(ark_handle, 1, 'cof');
+                rows = fread(ark_handle, 1, 'int32');
+                utt_mat = fread(ark_handle, rows, 'float32');
+            else
+                utt_mat = -1;
+                return;
+            end
         end
     else
         fseek(ark_handle, position, 'bof');
@@ -138,4 +172,18 @@ end
 function str = strstrip(str)
     str = regexprep(str, '^ *', '');
     str = regexprep(str, ' *$', '');
+end
+
+function valueFolat = Uint16ToFloat(min_value, range, valueUint16)
+    valueFolat = min_value + range * valueUint16 / 65535;
+end
+
+function valueFloat = CharToFloat(p0, p25, p75, p100, valueChar)
+    if valueChar <= 64
+        valueFloat = p0 + (p25 - p0) * valueChar / 64;
+    elseif valueChar <= 192
+        valueFloat = p25 + (p75 - p25) * (valueChar - 64) / 128;
+    else
+        valueFloat = p75 + (p100 - p75) * (valueChar - 192) / 63;
+    end
 end
